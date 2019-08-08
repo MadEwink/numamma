@@ -15,6 +15,7 @@
 #include "mem_analyzer.h"
 #include "mem_tools.h"
 #include "mem_sampling.h"
+#include "mem_bind.h"
 
 #define USE_HASHTABLE
 #define WARN_NON_FREED 1
@@ -661,57 +662,19 @@ struct memory_info* insert_memory_info(enum mem_type mem_type, size_t initial_bu
 void ma_get_global_variables() {
   /* make sure forked processes (eg nm, readlink, etc.) won't be analyzed */
   unset_ld_preload();
+  FILE *f;
+  char line[4096];
 
   debug_printf("Looking for global variables\n");
-  /* get the filename of the program being run */
-//  char readlink_cmd[1024];
-//  sprintf(readlink_cmd, "readlink /proc/%d/exe", getpid());
-//  FILE* f = popen(readlink_cmd, "r");
-//  if(!f) {
-//    perror("failed to get the program filename");
-//    abort();
-//  }
-//  while(fgets(program_file, 4096, f) == NULL) {
-//    /* fgets may be interrupted if we set an alarm */
-//    if(errno != EINTR ) {
-//      perror("fgets failed");
-//      abort();
-//    }
-//  }
-//  strtok(program_file, "\n"); // remove trailing newline
-//  pclose(f);
-  char link_path[1024];
-  sprintf(link_path, "/proc/%d/exe", getpid());
-  readlink(link_path, program_file, PROGRAM_FILE_LEN*sizeof(char));
 
+  /* get the filename of the program being run */
+  get_program_file(program_file, PROGRAM_FILE_LEN);
   debug_printf("  The program file is %s\n", program_file);
+
   /* get the address at which the program is mapped in memory */
-  char cmd[4069];
-  char line[4096];
   void *base_addr = NULL;
   void *end_addr = NULL;
-
-  FILE *f;
-  sprintf(cmd, "file \"%s\" |grep \"shared object\\|pie executable\" > plop", program_file);
-  int ret = system(cmd);
-  if(WIFEXITED(ret)) {
-    /* find address range of the heap */
-    int exit_status= WEXITSTATUS(ret);
-    if(exit_status == EXIT_SUCCESS) {
-      /* process is compiled with -fPIE, thus, the addresses in the ELF are to be relocated */
-      sprintf(cmd, "cat /proc/%d/maps |grep \"[heap]\"", getpid());
-      f = popen(cmd, "r");
-      fgets(line, 4096, f);
-      pclose(f);
-      sscanf(line, "%p-%p", &base_addr, &end_addr);
-      printf("[NumaMMA]  This program was compiled with -fPIE. It is mapped at address %p\n", base_addr);
-    } else {
-      /* process is not compiled with -fPIE, thus, the addresses in the ELF are the addresses in the binary */
-      base_addr= NULL;
-      end_addr= NULL;
-      printf("[NumaMMA]  This program was not compiled with -fPIE. It is mapped at address %p\n", base_addr);
-    }
-  }
+  get_map_address(program_file, &base_addr, &end_addr);
 
   /* get the list of global variables in the current binary */
   if(strcmp(program_file, "/usr/bin/bash")==0)
@@ -808,7 +771,9 @@ void ma_get_lib_variables() {
   }
   while (!feof(f)) {
     fgets(line, sizeof(line), f);
-    if (strstr(line, "lib") != NULL) {
+    if (strstr(line, "lib") != NULL
+		    && strstr(line, "ld") == NULL
+		    && strstr(line, "numa") == NULL) {
       // get rid of trailing new lines
       strtok(line, "\n");
       /* each line is in the form:
@@ -843,6 +808,7 @@ void ma_get_lib_variables() {
 	  if (ret != 0 && info.dli_saddr != NULL && extra_info != NULL
 			  && ELF64_ST_TYPE(extra_info->st_info) == STT_OBJECT && ELF64_ST_BIND(extra_info->st_info) == STB_GLOBAL) {
             struct memory_info *mem_info = insert_memory_info(lib, extra_info->st_size, info.dli_saddr, info.dli_sname);
+	    bind_buffer(mem_info->buffer_addr, mem_info->buffer_size, mem_info->caller);
 	    printf("Found a lib variable (defined at %s). addr=%p, size=%zu, symbol=%s\n",
 			    file, mem_info->buffer_addr, mem_info->buffer_size, mem_info->caller);
 	    i += extra_info->st_size;

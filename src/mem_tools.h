@@ -16,6 +16,8 @@ char* get_caller_function_from_rip(void* rip);
 
 void print_backtraceo(int backtrace_max_depth);
 
+void get_program_file(char* program_file, size_t size);
+void get_map_address(char* program_file, void** base_addr, void** end_addr);
 
 static inline uint64_t new_date() {
   struct timespec t;

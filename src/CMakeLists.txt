@@ -3,6 +3,7 @@ add_library(numamma SHARED
   mem_tools.c
   mem_sampling.c
   mem_analyzer.c
+  mem_bind.c
   )
 
 

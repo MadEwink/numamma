@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <execinfo.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "numamma.h"
 #include "mem_tools.h"
@@ -162,4 +164,36 @@ char* get_caller_function(int depth) {
   free(functions);
 
     return retval;
+}
+
+void get_program_file(char* program_file, size_t size) {
+  char link_path[size];
+  sprintf(link_path, "/proc/%d/exe", getpid());
+  readlink(link_path, program_file, size);
+}
+
+void get_map_address(char* program_file, void** base_addr, void** end_addr) {
+  FILE *f;
+  char cmd[4069];
+  char line[4096];
+  sprintf(cmd, "file \"%s\" |grep \"shared object\\|pie executable\" > plop", program_file);
+  int ret = system(cmd);
+  if(WIFEXITED(ret)) {
+    /* find address range of the heap */
+    int exit_status= WEXITSTATUS(ret);
+    if(exit_status == EXIT_SUCCESS) {
+      /* process is compiled with -fPIE, thus, the addresses in the ELF are to be relocated */
+      sprintf(cmd, "cat /proc/%d/maps |grep \"[heap]\"", getpid());
+      f = popen(cmd, "r");
+      fgets(line, 4096, f);
+      pclose(f);
+      sscanf(line, "%p-%p", base_addr, end_addr);
+      printf("[NumaMMA]  This program was compiled with -fPIE. It is mapped at address %p\n", *base_addr);
+    } else {
+      /* process is not compiled with -fPIE, thus, the addresses in the ELF are the addresses in the binary */
+      *base_addr= NULL;
+      *end_addr= NULL;
+      printf("[NumaMMA]  This program was not compiled with -fPIE. It is mapped at address %p\n", *base_addr);
+    }
+  }
 }
